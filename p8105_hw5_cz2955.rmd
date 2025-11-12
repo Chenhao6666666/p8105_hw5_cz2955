@@ -1,6 +1,6 @@
 ---
 title: "p8105_hw5_cz2955"
-output: html_document
+output: github_document
 name: Chenhai Zheng
 date: "2025-11-12"
 ---
