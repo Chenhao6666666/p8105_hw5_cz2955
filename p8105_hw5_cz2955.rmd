@@ -6,25 +6,191 @@ date: "2025-11-12"
 ---
 
 ```{r setup, include=FALSE}
+library(tidyverse)
+library(rvest)
+library(broom)
+library(purrr)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Question1
+### Function
+```{r}
+same_birth<-function(n){
+birthdays = sample(1:365, n, replace = TRUE)
+  any(duplicated(birthdays))
+}
+```
+### Simulation
+```{r}
+set.seed(36501)  
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+n_values <- 2:50 
+simulations <- 10000 
+probabilities <- sapply(n_values, function(n) {
+  mean(replicate(simulations, same_birth(n)))
+})
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```
+### Plot
+```{r}
+plot(n_values, probabilities, type = "b", pch = 19, col = "blue",
+     xlab = "Group Size (n)",
+     ylab = "Probability of Shared Birthday",
+     main = "Birthday Paradox Simulation")
 
-```{r cars}
-summary(cars)
+abline(h = 0.5, col = "red", lty = 2)
+
 ```
 
-## Including Plots
+## Question2
+### Data
+```{r}
+set.seed(36501)
 
-You can also embed plots, for example:
+n <- 30
+sigma <- 5
+mu_values <- 0:6
+n_sim <- 5000
+simulate_mu <- function(mu) {
+  replicate(n_sim, {
+    x <- rnorm(n, mean = mu, sd = sigma)
+    test <- t.test(x, mu = 0)
+    tibble(
+      mu_true = mu,
+      mu_hat = mean(x),
+      p_value = test$p.value
+    )
+  }, simplify = FALSE) |> bind_rows()
+}
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+results <- map_df(mu_values, simulate_mu)
+
+results <- results %>%
+  mutate(reject = p_value < 0.05)
+results 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Plot1
+```{r}
+power_summary <- results %>%
+  group_by(mu_true) %>%
+  summarize(power = mean(reject))
+
+ggplot(power_summary, aes(x = mu_true, y = power)) +
+  geom_line(color = "blue", linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    x = "True mean (μ)",
+    y = "Proportion of rejections (Power)",
+    title = "Power of one-sample t-test vs Effect Size"
+  ) +
+  theme_minimal()
+
+
+```
+
+### plot2
+```{r}
+ mu_summary <- results %>%
+  group_by(mu_true) %>%
+  summarize(
+    avg_mu_hat_all = mean(mu_hat),
+    avg_mu_hat_reject = mean(mu_hat[reject])
+  )
+
+ggplot(mu_summary, aes(x = mu_true)) +
+  geom_line(aes(y = avg_mu_hat_all, color = "All samples"), linewidth = 1.2) +
+  geom_point(aes(y = avg_mu_hat_all, color = "All samples")) +
+  geom_line(aes(y = avg_mu_hat_reject, color = "Rejected only"), linewidth = 1.2, linetype = "dashed") +
+  geom_point(aes(y = avg_mu_hat_reject, color = "Rejected only")) +
+  labs(
+    x = "True mean (μ)",
+    y = "Average estimate (μ̂)",
+    title = "Average estimates across all samples vs rejected samples",
+    color = ""
+  ) +
+  theme_minimal()
+
+```
+Ans：No, the sample average of $\hat\mu $ across tests for which the null was rejected is not approximately equal to the true value of $\mu$, especially when the true effect size is small.
+
+This happens because we are conditioning on rejection of the null hypothesis (i.e.,𝑝<0.05). When the true mean $\mu$ is close to 0, only those samples that happened — by random chance — to produce unusually large sample means will yield significant results. As a result, the average of $\hat\mu $ among the “significant” samples is biased upward relative to the true $\mu $.
+
+As the true effect size increases and the test’s power approaches 1, this selection bias disappears — almost all samples are significant, and the conditional average of $\hat\mu $ converges to the true value.
+
+## Question3
+### Baltimore Data
+```{r}
+homicide_data <- read_csv("homicide_data.csv")
+homicide_data <- homicide_data %>%
+  mutate(city_state = str_c(state, city, sep = ", "))%>%
+  mutate(
+    unsolved = if_else(
+      disposition %in% c("Closed without arrest", "Open/No arrest"),
+      1, 0
+    )
+  )
+head(homicide_data)
+
+city_summary <- homicide_data %>%
+  group_by(city_state) %>%
+  summarize(
+    total = n(),
+    unsolved = sum(unsolved),
+    .groups = "drop"
+  )
+
+baltimore <- city_summary %>%
+  filter(city_state == "MD, Baltimore")
+
+baltimore_test <- prop.test(
+  x = baltimore$unsolved,
+  n = baltimore$total
+)
+
+baltimore_result <- tidy(baltimore_test)
+baltimore_result
+
+```
+### Every City
+```{r}
+city_results <- city_summary %>%
+  mutate(
+    test = map2(unsolved, total, ~ prop.test(.x, .y) %>% tidy())
+  ) %>%
+  unnest(test) %>%
+  select(city_state, estimate, conf.low, conf.high, total) %>%
+  arrange(desc(estimate))
+city_results
+```
+
+### Plot
+```{r}
+ggplot(city_results, aes(
+  x = reorder(city_state, estimate),
+  y = estimate
+)) +
+  geom_point(color = "darkorange", size = 2.2) +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high),
+    width = 0.25,
+    color = "gray40"
+  ) +
+  coord_flip() +
+  labs(
+    title = "Proportion of Unsolved Homicides by City",
+    x = "City",
+    y = "Estimated Proportion (95% CI)"
+  ) +
+  theme_minimal(base_size = 12) +         
+  theme(axis.text.y = element_text(size = 8)) 
+
+
+```
+
+
+
+
+
+
